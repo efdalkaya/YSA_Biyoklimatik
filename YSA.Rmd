@@ -1,0 +1,150 @@
+---
+title: "Yapay Sinir Aglari ile Biyoklimatik Konfor Alanlarını Modelleme"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### Giriş
+
+Yapay sinir ağları ile model üretmek için birçok farklı kütüphane bulunmaktadır. 
+
+İlk olarak verimizi yüklüyoruz.
+
+```{r}
+library(readxl)
+
+veri <- read_xlsx("Veri_Yillik_2018.xlsx")
+
+# Veriye ait çeşitli bilgileri görüntüleyelim.
+
+# Sutün isimlerini öğrenmek için;
+colnames(veri)
+
+# Verinin yapısını görmek istersek;
+str(veri)
+
+# verinin boyutunu almak için;
+dim(veri)
+
+# Verinin özetini almak için;
+summary(veri)
+```
+
+### Veri Önişlem
+
+```{r}
+# Eksik veri var mi kontrol edilmeli
+eksik_veri <- apply(veri, 2, function(x) sum(is.na(x)))
+print(eksik_veri)
+
+# Verilerin ayni aralikta olmasi icin normalizasyon işlemi yapılır.
+normalizasyon <- function(x){
+  (x - min(x)) / (max(x) - min(x))
+}
+library(dplyr)
+veri <- veri %>%
+  mutate(
+    x=x,
+    y=y, 
+    ruzHiz = normalizasyon(ruzHiz), 
+    solRad = normalizasyon(solRad),
+    sicak = normalizasyon(sicak), 
+    fes = fes,
+    etiket = as.factor(etiket))
+head(veri)
+```
+
+```{r}
+# Veriler arasindaki korelasyona bakılır.
+# Korelasyon incelenir.
+cor2018 <- dplyr::select(veri,
+                          "nem",
+                          "ruzHiz",
+                          "solRad",
+                          "sicak",
+                          "fes")
+library(corrplot)
+library(ggcorrplot)
+cor.2018 = cor(cor2018)
+ggcorrplot(cor.2018,
+           type = "upper",
+           legend.title = "Pearson Korelasyon Katsayisi",
+           show.legend = TRUE,
+           hc.order = T,
+           colors = c("orange","white","darkgreen"),
+           title = "Veriler Arasindaki Korelasyon",
+           outline.color = "darkgray",
+           ggtheme = ggplot2::theme_bw(),
+           lab = F,
+           show.diag = FALSE)
+```
+
+### Model Oluşturma
+
+```{r}
+
+# YSA icin veri olusturma
+ysa2018 <- dplyr::select(veri,
+                         "nem",
+                         "ruzHiz",
+                         "solRad",
+                         "sicak",
+                         "etiket")
+
+# Veriyi eğitim ve test diye ayırma
+library(rsample)
+
+# Acik bir sekilde orneklemleri kontrol etmek istersek tabakali ayirma yapabiliriz.
+# %70 egitim, %30 test olarak veriyi ayırıyoruz.
+split_strat <- initial_split(ysa2018, prop=0.7, strata = "etiket")
+train <- training(split_strat)
+traincsv <- as.data.frame(train)
+write.csv(traincsv,"train_70.csv")
+test <- testing(split_strat)
+testcsv <- as.data.frame(test)
+write.csv(test,"test_70.csv")
+table(train$etiket) %>% prop.table()
+table(test$etiket) %>% prop.table()
+
+library(neuralnet)
+library(NeuralNetTools)
+library(NeuralSens)
+library(caret)
+# Model geçerlilik için k-fold yöntemi parametrelerini oluşturma
+# k değeri 10 olarak girilmiştir.
+tc_k_fold <- trainControl(method = "cv", number = 10)
+
+# k-fold yontemi ile model kurma
+fit_m1_kfold <- train(etiket ~ .,
+                      data = train,
+                      method= "nnet",
+                      trControl= tc_k_fold,
+                      maxit = 50,
+                      metric = "Accuracy",
+                      trace = FALSE)
+fit_m1_kfold
+fit_m1_kfold$results
+fit_m1_kfold$resample
+plotnet(fit_m1_kfold)
+summary(fit_m1_kfold)
+
+# Egitim setindeki ozelliklerin önem değerleri
+varImp(fit_m1_kfold)
+```
+
+### Modeli Test Verisi Üzerinde Tahmin Ettirme
+
+```{r}
+# Tahminler
+pred_m1 <- predict(fit_m1_kfold, test)
+pred_m1
+
+# Hata matrisi
+cm_m1 <- confusionMatrix(pred_m1, test$etiket)
+print(cm_m1)
+```
+
+
